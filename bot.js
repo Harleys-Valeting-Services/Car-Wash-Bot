@@ -4,7 +4,8 @@ app.use(express.json());
 
 const TOKEN = '8705581943:AAGSyEKXdishm0GBVYbE60sXeqYuRaeRLLI';
 const CHAT_ID = '7248045188';
-const API = 'https://api.telegram.org/bot' + TOKEN;
+const TELEGRAM_API = 'https://api.telegram.org/bot' + TOKEN;
+const ANTHROPIC_KEY = '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';
 
 let bookings = {};
 let blocked = {};
@@ -14,78 +15,81 @@ app.post('/webhook', async (req, res) => {
   const msg = req.body.message;
   if (!msg) return;
   if (String(msg.chat.id) !== CHAT_ID) return;
-
-  const text = (msg.text || '').toLowerCase().trim();
-  let reply = '';
-
-  if (text === '/start' || text === 'hello' || text === 'hi') {
-    reply = 'Hey! I am your Kenya Car Wash bot!\n\nHere is what you can ask me:\n\n/today - Today\'s booking\n/thisweek - This week\'s plan\n/nextweek - Next week\'s plan\n/raised - How much raised so far\n/isfree dd/mm/yyyy - Check if a date is free';
-
-  } else if (text === '/today') {
-    reply = buildDayReply(getDateStr(new Date()), 'Today');
-
-  } else if (text === '/thisweek') {
-    reply = buildWeekReply(new Date());
-
-  } else if (text === '/nextweek') {
-    const next = new Date();
-    next.setDate(next.getDate() + 7);
-    reply = buildWeekReply(next);
-
-  } else if (text === '/raised') {
-    const count = Object.keys(bookings).length;
-    const min = count * 20;
-    const percent = Math.round((min / 4600) * 100);
-    reply = 'Kenya 2027 Fundraiser\n\nBookings made: ' + count + '\nMinimum raised: £' + min + '\nGoal: £4,600\nProgress: ' + percent + '%';
-
-  } else if (text.startsWith('/isfree')) {
-    const parts = text.split(' ');
-    if (parts.length < 2) {
-      reply = 'Usage: /isfree dd/mm/yyyy\nExample: /isfree 14/04/2026';
-    } else {
-      const dateStr = parseDate(parts[1]);
-      if (!dateStr) {
-        reply = 'Invalid date. Use format: /isfree dd/mm/yyyy';
-      } else {
-        const d = new Date(dateStr + 'T00:00:00');
-        const day = d.getDay();
-        const label = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-        if (day === 0 || day === 5 || day === 6) {
-          reply = label + ' is not a car wash day. Washes run Monday to Thursday only.';
-        } else if (blocked[dateStr]) {
-          reply = label + ' is blocked. Reason: ' + blocked[dateStr].reason;
-        } else if (bookings[dateStr]) {
-          const b = bookings[dateStr];
-          reply = label + ' is already booked!\n\nName: ' + b.name + '\nCar: ' + b.make + ' ' + b.model + '\nReg: ' + b.reg;
-        } else {
-          reply = label + ' is free and available to book!';
-        }
-      }
-    }
-
-  } else {
-    reply = 'I did not understand that. Try:\n\n/today\n/thisweek\n/nextweek\n/raised\n/isfree dd/mm/yyyy';
+  const userText = (msg.text || '').trim();
+  if (!userText) return;
+  try {
+    const reply = await askClaude(userText);
+    await sendTelegram(reply);
+  } catch (err) {
+    console.error('Error:', err);
+    await sendTelegram('Sorry, something went wrong. Please try again!');
   }
+});
 
-  await fetch(API + '/sendMessage', {
+async function askClaude(userMessage) {
+  const today = new Date().toISOString().split('T')[0];
+  const todayFriendly = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const totalRaised = Object.keys(bookings).length * 20;
+  const progress = Math.round((totalRaised / 4600) * 100);
+  const bookingsSummary = buildBookingsSummary();
+  const blockedSummary = buildBlockedSummary();
+
+  const systemPrompt = 'You are a helpful assistant managing a school car wash fundraiser for a Kenya trip in 2027. You are chatting with the organiser via Telegram.\n\nABOUT THE CAR WASH:\n- Price: £20 per wash (exterior only)\n- Tips accepted, 100% goes to Kenya fund\n- Goal: raise £4,600\n- Time: 3:00 PM - 4:00 PM daily\n- Days: Monday to Thursday only\n- Location: Bike Lockup, Next to the Barrier\n- Only 1 car per day\n\nTODAY: ' + todayFriendly + ' (' + today + ')\n\nCURRENT BOOKINGS:\n' + bookingsSummary + '\n\nBLOCKED DATES:\n' + blockedSummary + '\n\nTOTAL RAISED: £' + totalRaised + '\nNUMBER OF BOOKINGS: ' + Object.keys(bookings).length + '\nPROGRESS TO GOAL: ' + progress + '%\n\nYOUR JOB:\n- Answer any questions about bookings, schedules, money raised\n- Tell the organiser who is booked on specific days or weeks\n- Check if dates are free or blocked\n- Draft custom receipts if asked\n- Be friendly, concise and use emojis\n- Keep replies short and scannable for Telegram\n- Format dates like Monday 9th March\n- Always use British pounds with the pound sign\n- If asked to block a date tell them to use the admin panel on their Netlify site';
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_KEY,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }]
+    })
+  });
+
+  const data = await response.json();
+  if (data.error) {
+    console.error('Anthropic error:', data.error);
+    return 'Sorry, I could not process that. Please try again!';
+  }
+  return data.content[0].text;
+}
+
+function buildBookingsSummary() {
+  const dates = Object.keys(bookings).sort();
+  if (dates.length === 0) return 'No bookings yet.';
+  return dates.map(function(d) {
+    const b = bookings[d];
+    const friendly = new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return friendly + ': ' + b.name + ' | ' + b.make + ' ' + b.model + ' | Reg: ' + b.reg + ' | Total: ' + b.total + ' | Email: ' + b.email;
+  }).join('\n');
+}
+
+function buildBlockedSummary() {
+  const dates = Object.keys(blocked).sort();
+  if (dates.length === 0) return 'No blocked dates.';
+  return dates.map(function(d) {
+    const friendly = new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return friendly + ': ' + blocked[d].reason;
+  }).join('\n');
+}
+
+async function sendTelegram(text) {
+  await fetch(TELEGRAM_API + '/sendMessage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: CHAT_ID, text: reply })
+    body: JSON.stringify({ chat_id: CHAT_ID, text: text })
   });
-});
+}
 
 app.post('/newbooking', (req, res) => {
   const b = req.body;
   if (b.date) {
-    bookings[b.date] = {
-      name: b.name,
-      email: b.email,
-      make: b.make,
-      model: b.model,
-      reg: b.reg,
-      tip: b.tip,
-      total: b.total
-    };
+    bookings[b.date] = { name: b.name, email: b.email, make: b.make, model: b.model, reg: b.reg, tip: b.tip, total: b.total };
   }
   res.sendStatus(200);
 });
@@ -95,58 +99,7 @@ app.post('/updateblocked', (req, res) => {
   res.sendStatus(200);
 });
 
-function getDateStr(d) {
-  return d.toISOString().split('T')[0];
-}
-
-function parseDate(str) {
-  const parts = str.split('/');
-  if (parts.length !== 3) return null;
-  const dd = parts[0];
-  const mm = parts[1];
-  const yyyy = parts[2];
-  if (!dd || !mm || !yyyy) return null;
-  return yyyy + '-' + mm.padStart(2, '0') + '-' + dd.padStart(2, '0');
-}
-
-function buildDayReply(dateStr, label) {
-  const d = new Date(dateStr + 'T00:00:00');
-  const friendly = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  if (blocked[dateStr]) {
-    return label + ' (' + friendly + ') is blocked. Reason: ' + blocked[dateStr].reason;
-  }
-  if (!bookings[dateStr]) {
-    return label + ' (' + friendly + ') - No booking yet.';
-  }
-  const b = bookings[dateStr];
-  return label + ' - ' + friendly + '\n\nName: ' + b.name + '\nCar: ' + b.make + ' ' + b.model + '\nReg: ' + b.reg + '\nTotal: ' + b.total + '\nTime: 3:00 - 4:00 PM\nLocation: Bike Lockup, Next to the Barrier';
-}
-
-function buildWeekReply(anyDate) {
-  const d = new Date(anyDate);
-  const day = d.getDay();
-  const mon = new Date(d);
-  mon.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
-  const weekLabel = mon.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-  let reply = 'Week of ' + weekLabel + '\n\n';
-  for (let i = 0; i < 4; i++) {
-    const current = new Date(mon);
-    current.setDate(mon.getDate() + i);
-    const ds = getDateStr(current);
-    const lbl = current.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
-    if (blocked[ds]) {
-      reply = reply + 'BLOCKED - ' + lbl + ' - ' + blocked[ds].reason + '\n\n';
-    } else if (bookings[ds]) {
-      const b = bookings[ds];
-      reply = reply + 'BOOKED - ' + lbl + '\nName: ' + b.name + '\nCar: ' + b.make + ' ' + b.model + '\nReg: ' + b.reg + '\nTotal: ' + b.total + '\n\n';
-    } else {
-      reply = reply + 'FREE - ' + lbl + ' - No booking\n\n';
-    }
-  }
-  return reply;
-}
-
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, function() {
-  console.log('Bot running on port ' + PORT);
+  console.log('AI Bot running on port ' + PORT);
 });

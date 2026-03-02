@@ -19,8 +19,7 @@ app.post('/webhook', async (req, res) => {
     reply = `👋 Hey! I'm your Kenya Car Wash bot 🇰🇪\n\nHere's what you can ask me:\n\n/today – Today's booking\n/thisweek – This week's plan\n/nextweek – Next week's plan\n/raised – How much raised so far\n/isfree dd/mm/yyyy – Check if a date is free`;
 
   } else if (text === '/today') {
-    const today = getDateStr(new Date());
-    reply = buildDayReply(today, 'Today');
+    reply = buildDayReply(getDateStr(new Date()), 'Today');
 
   } else if (text === '/thisweek') {
     reply = buildWeekReply(new Date());
@@ -32,13 +31,13 @@ app.post('/webhook', async (req, res) => {
 
   } else if (text === '/raised') {
     const count = Object.keys(bookings).length;
-    const min   = count * 20;
+    const min = count * 20;
     reply = `🇰🇪 <b>Kenya 2027 Fundraiser</b>\n\n✅ Bookings made: <b>${count}</b>\n💷 Minimum raised: <b>£${min}</b>\n🎯 Goal: <b>£4,600</b>\n📊 Progress: <b>${Math.round((min/4600)*100)}%</b>`;
 
   } else if (text.startsWith('/isfree')) {
     const parts = text.split(' ');
     if (parts.length < 2) {
-      reply = '❓ Usage: /isfree dd/mm/yyyy\nExample: /isfree 14/04/2025';
+      reply = '❓ Usage: /isfree dd/mm/yyyy\nExample: /isfree 14/04/2026';
     } else {
       const dateStr = parseDate(parts[1]);
       if (!dateStr) {
@@ -131,13 +130,3 @@ function buildWeekReply(anyDate) {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Bot running on port ${PORT}`));
-
-{
-  "name": "kenya-carwash-bot",
-  "version": "1.0.0",
-  "main": "bot.js",
-  "scripts": { "start": "node bot.js" },
-  "dependencies": {
-    "express": "^4.18.2"
-  }
-}

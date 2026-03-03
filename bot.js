@@ -5,7 +5,7 @@ app.use(express.json());
 const TOKEN = '8705581943:AAGSyEKXdishm0GBVYbE60sXeqYuRaeRLLI';
 const CHAT_ID = '7248045188';
 const TELEGRAM_API = 'https://api.telegram.org/bot' + TOKEN;
-const ANTHROPIC_KEY = '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';
+const ANTHROPIC_KEY = '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';
 
 let bookings = {};
 let blocked = {};
@@ -53,8 +53,12 @@ async function askClaude(userMessage) {
 
   const data = await response.json();
   if (data.error) {
-    console.error('Anthropic error:', data.error);
+    console.error('Anthropic error:', JSON.stringify(data.error));
     return 'Sorry, I could not process that. Please try again!';
+  }
+  if (!data.content || !data.content[0]) {
+    console.error('Unexpected response:', JSON.stringify(data));
+    return 'Sorry, I got an unexpected response. Please try again!';
   }
   return data.content[0].text;
 }

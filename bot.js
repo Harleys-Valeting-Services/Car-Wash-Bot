@@ -5,7 +5,7 @@ app.use(express.json());
 const TOKEN = '8705581943:AAGSyEKXdishm0GBVYbE60sXeqYuRaeRLLI';
 const CHAT_ID = '7248045188';
 const TELEGRAM_API = 'https://api.telegram.org/bot' + TOKEN;
-const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
+const GEMINI_KEY = process.env.GEMINI_KEY;
 
 let bookings = {};
 let blocked = {};
@@ -18,7 +18,7 @@ app.post('/webhook', async (req, res) => {
   const userText = (msg.text || '').trim();
   if (!userText) return;
   try {
-    const reply = await askClaude(userText);
+    const reply = await askGemini(userText);
     await sendTelegram(reply);
   } catch (err) {
     console.error('Caught error:', err.message);
@@ -26,9 +26,9 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-async function askClaude(userMessage) {
-  if (!ANTHROPIC_KEY) {
-    console.error('No ANTHROPIC_KEY set in environment');
+async function askGemini(userMessage) {
+  if (!GEMINI_KEY) {
+    console.error('No GEMINI_KEY set in environment');
     return 'Bot is not configured correctly. Please contact the admin.';
   }
 
@@ -39,26 +39,20 @@ async function askClaude(userMessage) {
   const bookingsSummary = buildBookingsSummary();
   const blockedSummary = buildBlockedSummary();
 
-  const systemPrompt = 'You are a helpful assistant managing a school car wash fundraiser for a Kenya trip in 2027. You are chatting with the organiser via Telegram.\n\nABOUT THE CAR WASH:\n- Price: £20 per wash (exterior only)\n- Tips accepted, 100% goes to Kenya fund\n- Goal: raise £4,600\n- Time: 3:00 PM - 4:00 PM daily\n- Days: Monday to Thursday only\n- Location: Bike Lockup, Next to the Barrier\n- Only 1 car per day\n\nTODAY: ' + todayFriendly + ' (' + today + ')\n\nCURRENT BOOKINGS:\n' + bookingsSummary + '\n\nBLOCKED DATES:\n' + blockedSummary + '\n\nTOTAL RAISED: £' + totalRaised + '\nNUMBER OF BOOKINGS: ' + Object.keys(bookings).length + '\nPROGRESS TO GOAL: ' + progress + '%\n\nYOUR JOB:\n- Answer any questions about bookings, schedules, money raised\n- Tell the organiser who is booked on specific days or weeks\n- Check if dates are free or blocked\n- Draft custom receipts if asked\n- Be friendly, concise and use emojis\n- Keep replies short and scannable for Telegram\n- Format dates like Monday 9th March\n- Always use British pounds with the pound sign\n- If asked to block a date tell them to use the admin panel on their Netlify site';
+  const prompt = 'You are a helpful assistant managing a school car wash fundraiser for a Kenya trip in 2027. You are chatting with the organiser via Telegram.\n\nABOUT THE CAR WASH:\n- Price: £20 per wash (exterior only)\n- Tips accepted, 100% goes to Kenya fund\n- Goal: raise £4,600\n- Time: 3:00 PM - 4:00 PM daily\n- Days: Monday to Thursday only\n- Location: Bike Lockup, Next to the Barrier\n- Only 1 car per day\n\nTODAY: ' + todayFriendly + ' (' + today + ')\n\nCURRENT BOOKINGS:\n' + bookingsSummary + '\n\nBLOCKED DATES:\n' + blockedSummary + '\n\nTOTAL RAISED: £' + totalRaised + '\nNUMBER OF BOOKINGS: ' + Object.keys(bookings).length + '\nPROGRESS TO GOAL: ' + progress + '%\n\nYOUR JOB:\n- Answer any questions about bookings, schedules, money raised\n- Tell the organiser who is booked on specific days or weeks\n- Check if dates are free or blocked\n- Draft custom receipts if asked\n- Be friendly, concise and use emojis\n- Keep replies short and scannable for Telegram\n- Format dates like Monday 9th March\n- Always use British pounds with the pound sign\n- If asked to block a date tell them to use the admin panel on their Netlify site\n\nUser message: ' + userMessage;
 
   let response;
   try {
-    response = await fetch('https://api.anthropic.com/v1/messages', {
+    response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + GEMINI_KEY, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_KEY,
-        'anthropic-version': '2023-06-01'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }]
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 1024, temperature: 0.7 }
       })
     });
   } catch (fetchErr) {
-    console.error('Fetch to Anthropic failed:', fetchErr.message);
+    console.error('Fetch to Gemini failed:', fetchErr.message);
     return 'Could not reach the AI service. Please try again in a moment!';
   }
 
@@ -66,23 +60,23 @@ async function askClaude(userMessage) {
   try {
     data = await response.json();
   } catch (jsonErr) {
-    console.error('Failed to parse Anthropic response:', jsonErr.message);
-    return 'Got an unexpected response from the AI. Please try again!';
-  }
-
-  console.log('Anthropic status:', response.status);
-
-  if (data.error) {
-    console.error('Anthropic API error:', JSON.stringify(data.error));
-    return 'The AI service returned an error. Please try again!';
-  }
-
-  if (!data.content || !data.content[0] || !data.content[0].text) {
-    console.error('Unexpected Anthropic response shape:', JSON.stringify(data));
+    console.error('Failed to parse Gemini response:', jsonErr.message);
     return 'Got an unexpected response. Please try again!';
   }
 
-  return data.content[0].text;
+  console.log('Gemini status:', response.status);
+
+  if (data.error) {
+    console.error('Gemini API error:', JSON.stringify(data.error));
+    return 'The AI service returned an error: ' + data.error.message;
+  }
+
+  if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts[0]) {
+    console.error('Unexpected Gemini response:', JSON.stringify(data));
+    return 'Got an unexpected response. Please try again!';
+  }
+
+  return data.candidates[0].content.parts[0].text;
 }
 
 function buildBookingsSummary() {
@@ -119,15 +113,7 @@ async function sendTelegram(text) {
 app.post('/newbooking', (req, res) => {
   const b = req.body;
   if (b.date) {
-    bookings[b.date] = {
-      name: b.name,
-      email: b.email,
-      make: b.make,
-      model: b.model,
-      reg: b.reg,
-      tip: b.tip,
-      total: b.total
-    };
+    bookings[b.date] = { name: b.name, email: b.email, make: b.make, model: b.model, reg: b.reg, tip: b.tip, total: b.total };
     console.log('New booking saved for:', b.date, b.name);
   }
   res.sendStatus(200);
@@ -144,12 +130,12 @@ app.get('/health', (req, res) => {
     status: 'ok',
     bookings: Object.keys(bookings).length,
     blocked: Object.keys(blocked).length,
-    hasApiKey: !!ANTHROPIC_KEY
+    hasGeminiKey: !!GEMINI_KEY
   });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, function() {
   console.log('AI Bot running on port ' + PORT);
-  console.log('ANTHROPIC_KEY set:', !!ANTHROPIC_KEY);
+  console.log('GEMINI_KEY set:', !!GEMINI_KEY);
 });

@@ -5,7 +5,7 @@ app.use(express.json());
 const TOKEN = '8705581943:AAGSyEKXdishm0GBVYbE60sXeqYuRaeRLLI';
 const CHAT_ID = '7248045188';
 const TELEGRAM_API = 'https://api.telegram.org/bot' + TOKEN;
-const GEMINI_KEY = process.env.GEMINI_KEY;
+const GROQ_KEY = process.env.GROQ_KEY;
 
 let bookings = {};
 let blocked = {};
@@ -18,7 +18,7 @@ app.post('/webhook', async (req, res) => {
   const userText = (msg.text || '').trim();
   if (!userText) return;
   try {
-    const reply = await askGemini(userText);
+    const reply = await askGroq(userText);
     await sendTelegram(reply);
   } catch (err) {
     console.error('Caught error:', err.message);
@@ -26,9 +26,9 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-async function askGemini(userMessage) {
-  if (!GEMINI_KEY) {
-    console.error('No GEMINI_KEY set in environment');
+async function askGroq(userMessage) {
+  if (!GROQ_KEY) {
+    console.error('No GROQ_KEY set in environment');
     return 'Bot is not configured correctly. Please contact the admin.';
   }
 
@@ -39,20 +39,27 @@ async function askGemini(userMessage) {
   const bookingsSummary = buildBookingsSummary();
   const blockedSummary = buildBlockedSummary();
 
-  const prompt = 'You are a helpful assistant managing a school car wash fundraiser for a Kenya trip in 2027. You are chatting with the organiser via Telegram.\n\nABOUT THE CAR WASH:\n- Price: £20 per wash (exterior only)\n- Tips accepted, 100% goes to Kenya fund\n- Goal: raise £4,600\n- Time: 3:00 PM - 4:00 PM daily\n- Days: Monday to Thursday only\n- Location: Bike Lockup, Next to the Barrier\n- Only 1 car per day\n\nTODAY: ' + todayFriendly + ' (' + today + ')\n\nCURRENT BOOKINGS:\n' + bookingsSummary + '\n\nBLOCKED DATES:\n' + blockedSummary + '\n\nTOTAL RAISED: £' + totalRaised + '\nNUMBER OF BOOKINGS: ' + Object.keys(bookings).length + '\nPROGRESS TO GOAL: ' + progress + '%\n\nYOUR JOB:\n- Answer any questions about bookings, schedules, money raised\n- Tell the organiser who is booked on specific days or weeks\n- Check if dates are free or blocked\n- Draft custom receipts if asked\n- Be friendly, concise and use emojis\n- Keep replies short and scannable for Telegram\n- Format dates like Monday 9th March\n- Always use British pounds with the pound sign\n- If asked to block a date tell them to use the admin panel on their Netlify site\n\nUser message: ' + userMessage;
+  const systemPrompt = 'You are a helpful assistant managing a school car wash fundraiser for a Kenya trip in 2027. You are chatting with the organiser via Telegram.\n\nABOUT THE CAR WASH:\n- Price: £20 per wash (exterior only)\n- Tips accepted, 100% goes to Kenya fund\n- Goal: raise £4,600\n- Time: 3:00 PM - 4:00 PM daily\n- Days: Monday to Thursday only\n- Location: Bike Lockup, Next to the Barrier\n- Only 1 car per day\n\nTODAY: ' + todayFriendly + ' (' + today + ')\n\nCURRENT BOOKINGS:\n' + bookingsSummary + '\n\nBLOCKED DATES:\n' + blockedSummary + '\n\nTOTAL RAISED: £' + totalRaised + '\nNUMBER OF BOOKINGS: ' + Object.keys(bookings).length + '\nPROGRESS TO GOAL: ' + progress + '%\n\nYOUR JOB:\n- Answer any questions about bookings, schedules, money raised\n- Tell the organiser who is booked on specific days or weeks\n- Check if dates are free or blocked\n- Draft custom receipts if asked\n- Be friendly, concise and use emojis\n- Keep replies short and scannable for Telegram\n- Format dates like Monday 9th March\n- Always use British pounds with the pound sign\n- If asked to block a date tell them to use the admin panel on their Netlify site';
 
   let response;
   try {
-    response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_KEY, {
+    response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + GROQ_KEY
+      },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { maxOutputTokens: 1024, temperature: 0.7 }
+        model: 'llama-3.1-8b-instant',
+        max_tokens: 1024,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ]
       })
     });
   } catch (fetchErr) {
-    console.error('Fetch to Gemini failed:', fetchErr.message);
+    console.error('Fetch to Groq failed:', fetchErr.message);
     return 'Could not reach the AI service. Please try again in a moment!';
   }
 
@@ -60,23 +67,23 @@ async function askGemini(userMessage) {
   try {
     data = await response.json();
   } catch (jsonErr) {
-    console.error('Failed to parse Gemini response:', jsonErr.message);
+    console.error('Failed to parse Groq response:', jsonErr.message);
     return 'Got an unexpected response. Please try again!';
   }
 
-  console.log('Gemini status:', response.status);
+  console.log('Groq status:', response.status);
 
   if (data.error) {
-    console.error('Gemini API error:', JSON.stringify(data.error));
+    console.error('Groq API error:', JSON.stringify(data.error));
     return 'The AI service returned an error: ' + data.error.message;
   }
 
-  if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts[0]) {
-    console.error('Unexpected Gemini response:', JSON.stringify(data));
+  if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+    console.error('Unexpected Groq response:', JSON.stringify(data));
     return 'Got an unexpected response. Please try again!';
   }
 
-  return data.candidates[0].content.parts[0].text;
+  return data.choices[0].message.content;
 }
 
 function buildBookingsSummary() {
@@ -130,12 +137,12 @@ app.get('/health', (req, res) => {
     status: 'ok',
     bookings: Object.keys(bookings).length,
     blocked: Object.keys(blocked).length,
-    hasGeminiKey: !!GEMINI_KEY
+    hasGroqKey: !!GROQ_KEY
   });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, function() {
   console.log('AI Bot running on port ' + PORT);
-  console.log('GEMINI_KEY set:', !!GEMINI_KEY);
+  console.log('GROQ_KEY set:', !!GROQ_KEY);
 });

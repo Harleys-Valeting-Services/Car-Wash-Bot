@@ -14,15 +14,21 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
   const msg = req.body.message;
   if (!msg) return;
-  if (String(msg.chat.id) !== CHAT_ID) return;
+  const chatId = String(msg.chat.id);
   const userText = (msg.text || '').trim();
   if (!userText) return;
+  // In groups, only respond if the bot is mentioned or message starts with /
+  const isGroup = msg.chat.type === 'group' || msg.chat.type === 'supergroup';
+  const botUsername = '@BookingssBot';
+  if (isGroup && !userText.includes(botUsername) && !userText.startsWith('/')) return;
+  // Strip bot mention from message
+  const cleanText = userText.replace(botUsername, '').trim();
   try {
-    const reply = await askGroq(userText);
-    await sendTelegram(reply);
+    const reply = await askGroq(cleanText);
+    await sendTelegramTo(chatId, reply);
   } catch (err) {
     console.error('Caught error:', err.message);
-    await sendTelegram('Sorry, something went wrong. Please try again!');
+    await sendTelegramTo(chatId, 'Sorry, something went wrong. Please try again!');
   }
 });
 
@@ -106,11 +112,15 @@ function buildBlockedSummary() {
 }
 
 async function sendTelegram(text) {
+  return sendTelegramTo(CHAT_ID, text);
+}
+
+async function sendTelegramTo(chatId, text) {
   try {
     await fetch(TELEGRAM_API + '/sendMessage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: CHAT_ID, text: text })
+      body: JSON.stringify({ chat_id: chatId, text: text })
     });
   } catch (err) {
     console.error('Failed to send Telegram message:', err.message);
